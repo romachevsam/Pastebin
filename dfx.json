@@ -1,0 +1,27 @@
+{
+  "canisters": {
+    "pastebin_backend": {
+      "candid": "src/pastebin_backend/pastebin_backend.did",
+      "package": "pastebin_backend",
+      "type": "rust"
+    },
+    "pastebin_frontend": {
+      "dependencies": [
+        "pastebin_backend"
+      ],
+      "source": [
+        "src/pastebin_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "pastebin_frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

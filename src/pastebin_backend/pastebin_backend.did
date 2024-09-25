@@ -1,0 +1,5 @@
+service : {
+  "create_paste": (text) -> (nat64);
+  "get_paste": (nat64) -> (opt record { id: nat64; content: text; timestamp: nat64 });
+  "list_pastes": () -> (vec record { id: nat64; content: text; timestamp: nat64 });
+}
