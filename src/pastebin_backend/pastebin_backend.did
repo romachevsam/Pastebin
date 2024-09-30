@@ -1,5 +1,20 @@
+type Paste = record {
+  id: nat64;
+  content: text;
+  timestamp: nat64;
+};
+
+type PasteError = variant {
+  NotFound: record { msg: text };
+  InvalidInput: record { msg: text };
+};
+
 service : {
-  "create_paste": (text) -> (nat64);
-  "get_paste": (nat64) -> (opt record { id: nat64; content: text; timestamp: nat64 });
-  "list_pastes": () -> (vec record { id: nat64; content: text; timestamp: nat64 });
+  "create_paste": (text) -> (result nat64, PasteError);        
+  "get_paste": (nat64) -> (result Paste, PasteError);          
+  "update_paste": (nat64, text) -> (result Paste, PasteError);  
+  "delete_paste": (nat64) -> (result Paste, PasteError);
+  "list_pastes": (opt nat64, opt nat64) -> (vec Paste);
+  "search_pastes": (text) -> (vec Paste);                      
+  "list_all_pastes": () -> (vec Paste);                        
 }
