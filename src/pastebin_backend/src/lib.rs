@@ -3,9 +3,8 @@ use ic_cdk_macros::{init, update, query};
 use std::collections::HashMap;
 use candid::{Decode, Encode};
 use ic_cdk::api::time;
-use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
-use ic_stable_structures::{BoundedStorable, Cell, DefaultMemoryImpl, StableBTreeMap, Storable};
-use std::{borrow::Cow, cell::RefCell};
+use thiserror::Error;
+use ic_cdk::storage;
 
 type PasteId = u64;
 
@@ -16,140 +15,120 @@ struct Paste {
     timestamp: u64,
 }
 
-// Error type for handling failures
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Error, Debug)]
 enum PasteError {
-    NotFound { msg: String },
-    InvalidInput { msg: String },
+    #[error("Paste with id {0} not found")]
+    NotFound(PasteId),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl PasteError {
     fn not_found(id: PasteId) -> Self {
-        PasteError::NotFound {
-            msg: format!("Paste with id {} not found", id),
-        }
+        PasteError::NotFound(id)
     }
 
     fn invalid_input(msg: &str) -> Self {
-        PasteError::InvalidInput {
-            msg: msg.to_string(),
-        }
+        PasteError::InvalidInput(msg.to_string())
     }
-}
-
-// In-memory storage using thread_local! for thread safety
-thread_local! {
-    static PASTE_STORE: RefCell<HashMap<PasteId, Paste>> = RefCell::new(HashMap::new());
-    static NEXT_ID: RefCell<PasteId> = RefCell::new(0);
 }
 
 #[init]
 fn init() {
     ic_cdk::println!("Paste management system initialized");
+    storage::stable_save((HashMap::<PasteId, Paste>::new(), 0u64)).unwrap();
 }
 
-// Create a new paste
-#[ic_cdk::update]
+#[update]
 fn create_paste(content: String) -> Result<PasteId, PasteError> {
     if content.is_empty() {
         return Err(PasteError::invalid_input("Content cannot be empty"));
     }
 
     let timestamp = ic_cdk::api::time();
-    PASTE_STORE.with(|store| {
-        NEXT_ID.with(|next_id| {
-            let mut id_counter = next_id.borrow_mut();
-            let new_id = *id_counter;
+    let (mut store, mut next_id): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
 
+    let new_id = next_id;
             let paste = Paste {
                 id: new_id,
                 content,
                 timestamp,
             };
 
-            store.borrow_mut().insert(new_id, paste);
-            *id_counter += 1;
+    store.insert(new_id, paste);
+    next_id += 1;
+
+    storage::stable_save((store, next_id)).unwrap();
             Ok(new_id)
-        })
-    })
 }
 
-// Get a paste by ID
-#[ic_cdk::query]
+#[query]
 fn get_paste(id: PasteId) -> Result<Paste, PasteError> {
-    PASTE_STORE.with(|store| {
-        store.borrow().get(&id).cloned().ok_or(PasteError::not_found(id))
-    })
+    let (store, _): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
+    store.get(&id).cloned().ok_or(PasteError::not_found(id))
 }
 
-// Update an existing paste
-#[ic_cdk::update]
+#[update]
 fn update_paste(id: PasteId, new_content: String) -> Result<Paste, PasteError> {
     if new_content.is_empty() {
         return Err(PasteError::invalid_input("Content cannot be empty"));
     }
 
-    PASTE_STORE.with(|store| {
-        let mut store = store.borrow_mut();
+    let timestamp = ic_cdk::api::time();
+    let (mut store, next_id): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
+
         if let Some(paste) = store.get_mut(&id) {
             paste.content = new_content;
-            paste.timestamp = ic_cdk::api::time();
+        paste.timestamp = timestamp;
+        storage::stable_save((store, next_id)).unwrap();
             Ok(paste.clone())
         } else {
             Err(PasteError::not_found(id))
         }
-    })
 }
 
-// Delete a paste by ID
-#[ic_cdk::update]
+#[update]
 fn delete_paste(id: PasteId) -> Result<Paste, PasteError> {
-    PASTE_STORE.with(|store| {
-        let mut store = store.borrow_mut();
-        store.remove(&id).ok_or(PasteError::not_found(id))
-    })
+    let (mut store, next_id): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
+    let result = store.remove(&id).ok_or(PasteError::not_found(id));
+    storage::stable_save((store, next_id)).unwrap();
+    result
 }
 
-// List all pastes with optional pagination (page and per_page parameters)
-#[ic_cdk::query]
+#[query]
 fn list_pastes(page: Option<u64>, per_page: Option<u64>) -> Vec<Paste> {
     let page = page.unwrap_or(1);
     let per_page = per_page.unwrap_or(5);
 
-    PASTE_STORE.with(|store| {
-        let store = store.borrow();
+    if page == 0 || per_page == 0 {
+        return Vec::new();
+    }
+
+    let (store, _): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
         store.values()
             .cloned()
             .skip(((page - 1) * per_page) as usize)
             .take(per_page as usize)
             .collect()
-    })
 }
 
-// Search pastes by keyword in the content
-#[ic_cdk::query]
+#[query]
 fn search_pastes(keyword: String) -> Vec<Paste> {
     if keyword.is_empty() {
         return Vec::new();
     }
 
-    PASTE_STORE.with(|store| {
-        store
-            .borrow()
-            .values()
+    let (store, _): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
+    store.values()
             .filter(|paste| paste.content.contains(&keyword))
             .cloned()
             .collect()
-    })
 }
 
-// List all pastes (without pagination)
-#[ic_cdk::query]
+#[query]
 fn list_all_pastes() -> Vec<Paste> {
-    PASTE_STORE.with(|store| {
-        store.borrow().values().cloned().collect()
-    })
+    let (store, _): (HashMap<PasteId, Paste>, PasteId) = storage::stable_restore().unwrap();
+    store.values().cloned().collect()
 }
 
-// Export candid for the canister
 ic_cdk::export_candid!();
